@@ -1,0 +1,103 @@
+import signal
+import sys
+import RPi.GPIO as GPIO
+from datetime import timedelta
+import time
+import cc1101
+
+
+BUTTON_GPIO = 26
+running = False
+
+def signal_handler(sig, frame):
+        GPIO.cleanup()
+        sys.exit(0)
+
+def button_pressed_callback(channel):
+        global running
+        if running:
+                print("Button pressed! stopping main")
+                running = False
+        else:
+                print("Button pressed! running main")
+                main()
+                running = True
+    
+def main():
+        # read cmd line args
+        LEADER = sys.argv[1] == "1"
+        if LEADER:
+                print("--------Leader---------")
+        else:
+                print("--------Follower, listening...")
+
+        with cc1101.CC1101() as transceiver:
+		
+                transceiver.set_base_frequency_hertz(433.92e6)
+                transceiver.set_symbol_rate_baud(4800) # default
+                # ~ transceiver._set_modulation_format(cc1101.ModulationFormat.FSK2)
+                num = 0
+                # ~ transceiver.disable_checksum() # don't think we want to disable this
+                transceiver.set_output_power((5, 0xc6))
+                print(transceiver)
+
+                while LEADER: # leader loop
+			#print(f"Transmitting: {num}")
+			#transceiver.transmit(bytes([num]))
+			#num += 1
+			#num %= 255
+			#time.sleep(1)
+                        send(transceiver, 1)
+                        response = False
+                        start_time = time.time() 
+                        if (receive(transceiver, 2)): # later will also check for correct address
+                                response = True
+                                time.sleep(1)
+                                
+		
+                while not LEADER: # receiver (follower) loop
+			#msg = transceiver._wait_for_packet(timedelta(seconds=2))
+			#if msg != None:
+                                # msg.payload.hex() gives string of hex digits
+                                # convert to int w/ base 16
+				#print(int(msg.payload.hex(), 16))
+                        if (receive(transceiver, 5)):
+                                time.sleep(1)
+                                send(transceiver,1) # send response after hearing a message
+
+def send(transceiver, duration):
+        # send repeatedly for duration of time given
+        start_time = time.time()
+        num = 0
+        while (time.time() - start_time <= duration):
+                print(f"Transmitting: {num}")
+                transceiver.transmit(bytes([num]))
+                num += 1
+                num %= 255
+                time.sleep(0.2)
+                
+def receive(transceiver, timeout):
+        # listen for message until timeout reached
+        start_time = time.time()
+        while (time.time() - start_time < timeout):
+                msg = transceiver._wait_for_packet(timedelta(seconds=2))
+                if msg != None:
+                        # msg.payload.hex() gives string of hex digits
+                        # convert to int w/ base 16
+                        print("Received:", end=' ')
+                        print(int(msg.payload.hex(), 16))
+                        return True
+        return False
+
+
+if __name__ == '__main__':
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup(BUTTON_GPIO, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+
+        GPIO.add_event_detect(BUTTON_GPIO, GPIO.FALLING, 
+                callback=button_pressed_callback, bouncetime=200)
+        
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.pause()
+
+
