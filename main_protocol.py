@@ -12,25 +12,22 @@ from math import ceil
 from pydub import AudioSegment
 from pydub.playback import _play_with_simpleaudio, play
 
-# define lower and upper limits of random delay for response to attendance messages
-RAND_LOWER = 0.05  # must be >0 or TX error thrown
+""" Constants used in transceiver functions. """
+RAND_LOWER = 0.05  # must be > 0 or else TX error thrown
 RAND_UPPER = 0.5
-# how many seconds to wait for message before taking leader position
-WAIT_FOR_ATTENDANCE_SEC = 2
+WAIT_FOR_ATTENDANCE_SEC = 2  # new device on startup
 ATTENDANCE_RESPONSE_SEC = 1.5  # send duration for follower responses
-SEND_LIST_DELAY = 0.1  # how long to wait between list messages
-WAIT_FOR_CHECK_IN_RESPONSE = 1.5  # how long to wait for response from device
-CHECK_IN_RESPONSE = 1.0 # send duration for check in responses
-CHECK_IN_DELAY = 0.5  # how long to delay before sending next check in message
-FOLLOWER_LISTEN_THRESHOLD = 4  # how long to wait until entering leader takeover stage
-# how long to send messages that only need to be sent once (theoretically)
-SINGLE_SEND_DURATION = 0.5
-# maximum number of check-ins that can be missed before being deleted
-MAX_MISSED_CHECK_INS = 2
+SEND_LIST_DELAY = 0.1  # between sending list messages on leader side
+WAIT_FOR_CHECK_IN_RESPONSE = 1.5  # leader waiting for response from device
+CHECK_IN_RESPONSE = 1.0  # follower send duration
+CHECK_IN_DELAY = 0.5  # leader delay between different check in messages
+FOLLOWER_LISTEN_THRESHOLD = 4  # how long follower waits until entering leader takeover stage
+SINGLE_SEND_DURATION = 0.5  # baseline send duration
+MAX_MISSED_CHECK_INS = 2  # acommodates packet loss or noisy channel
 
 looping = True
 
-# create images for leader and follower to display
+""" Create images for leader and follower to display. """
 fig, ax = plt.subplots()
 role_text = None
 track_text = None
@@ -53,29 +50,32 @@ FOLLOW_IMG = np.zeros((height, width, 3), dtype=np.uint8)
 FOLLOW_IMG[:, :, :] = (0, 0, 0xFF)
 
 # audio information
-AUDIO_PATH = "tracks/"  # folder with folders of songs
-REDUCE_VOLUME = 5 # reduce volume of track
-SONG_START_OFFSET = 2 # how many seconds to add to current time
+AUDIO_PATH = "tracks/"  # folder of song folders
+REDUCE_VOLUME = 5  # reduce volume of track
+SONG_START_OFFSET = 2  # baseline delay for song start in seconds
 
 
-# define bit masks and shifts based on message details
 class ActionCodes(Enum):
+    """ Defines bit masks and shifts based on message details. """
+
     ATTENDANCE = 0b1000
     RESPONSE = 0b0001
     SONG = 0b0010
-    FIRST_LIST = 0b0011  # first list message (not necessary if we have followers add leader to list by default when attendance msg is heard)
-    N_LIST = 0b0100  # following list messages
+    FIRST_LIST = 0b0011
+    N_LIST = 0b0100
     CHECK_IN = 0b0101
     DELETE = 0b0110
-    NEW_LEADER = 0b1111  # sent by a new leader to change leaders
+    NEW_LEADER = 0b1111
     SONG_JOIN = 0b1100
 
 
 class MessageBits(Enum):
+    """ Details how message bits are arranged. """
     # messages are formatted with action as least significant bits
     # option bits are most significant
     # 9223372036854775807 is max 48 bit integer
     # 65535 is max 16 bit integer
+
     ACTION_LEN = 4
     ACTION_SHIFT = 0
     ACTION_MASK = 0xF << ACTION_SHIFT
@@ -91,7 +91,14 @@ class MessageBits(Enum):
 
 
 class Message:
+    """ Object carrying action, payload, option with bit masking. """
+
     def __init__(self, msg: int):
+        """
+        Non-default constructor for Message object.
+        :param msg: int payload to be transmitted.
+        """
+
         self.action = self.bit_masking(
             msg, MessageBits.ACTION_MASK, MessageBits.ACTION_SHIFT
         )
@@ -105,14 +112,26 @@ class Message:
             msg, MessageBits.OPTION_MASK, MessageBits.OPTION_SHIFT
         )
 
-        # negatives are trasmitted as two's complement
+        # negatives are transmitted as two's complement
         if self.options == (1 << MessageBits.OPTION_LEN.value) - 1:
             self.options = -1
 
     def bit_masking(self, msg, mask, shift):
+        """
+        Shifts bits to perform bit masking.
+        :param msg: desired payload
+        :param mask: desired mask
+        :param shift: desired shift value
+        :return: masked payload
+        """
+
         return (msg & mask.value) >> shift.value
 
     def __str__(self) -> str:
+        """
+        String representation of Message object, used for console printing.
+        :return: Concatenated string representation.
+        """
         out = [
             f"message w/ Action: {self.action}",
             f"Leader Address: {hex(self.leader_addr)}",
@@ -123,33 +142,68 @@ class Message:
 
 
 class Device:
+    """ Lightweight device object for storing in a DeviceList. """
+
     def __init__(self, address):
+        """
+        Non-default constructor for Device object.
+        :param address: identifier for instance.
+        """
+
         self.address = address  # MAC address stored as int
         self.track = None  # track placeholder
-        self.leader = False  # start as follower
+        self.leader = False  # initialized as follower
         self.received = None
-        self.missed = 0 # for leader to keep track of missed check-ins
+        self.missed = 0  # used by current leader
 
     def get_leader(self):
+        """
+        :return: Device's current leader.
+        """
+
         return self.leader
 
     def get_address(self):
+        """
+        :return: Device's MAC address.
+        """
+
         return self.address
 
     def get_track(self):
+        """
+        :return: Device's current track index.
+        """
+
         return self.track
 
     def set_track(self, track):
+        """
+        :param track: index assigned to Device.
+        """
+
         self.track = track
 
 
 class DeviceList:
+    """ Container for lightweight Device objects, held by ThisDevice. """
+
     def __init__(self, num_tracks):
-        # devices with track == -1 will be reserves
+        """
+        Non-default constructor for DeviceList object.
+        :param num_tracks: size of DeviceList, number of tracks in current song.
+        """
+
+        # track == -1 denotes a reserve
         self.devices = []
         self.track_options = list(range(num_tracks))
 
     def __str__(self):
+        """
+        String representation of Devices in DeviceList.
+        :return: Concatenated string representation.
+        """
+
         output = ["DeviceList:"]
         for device in self.devices:
             track = device.track if device.track is not None else "Reserve"
@@ -157,45 +211,84 @@ class DeviceList:
         return "\n\t".join(output)
 
     def __iter__(self):
+        """
+        Iterator for Devices in DeviceList.
+        :return: iterator object.
+        """
+
         return iter(self.devices)
 
     def __len__(self):
+        """
+        Length of Devices in DeviceList.
+        :return: number of Devices in DeviceList as an int.
+        """
+
         return len(self.devices)
 
     def update_num_tracks(self, num_tracks):
+        """
+        Resize DeviceList, used to upscale or downscale tracks.
+        :param num_tracks: number of tracks in new song.
+        """
+
         self.track_options = list(range(num_tracks))
 
-    # function to add device with given address and track
     def add_device(self, address, track):
+        """
+        Creates Device object with address and track, stores in DeviceList.
+        :param address: identifier for device, assigned to new Device object.
+        :param track: track for device, assigned to new Device object.
+        """
+
         device = Device(address)
         device.set_track(track)
         self.devices.append(device)
 
-    # finds device with specified address
-    def find_device(self, address):  # returns device object with associated address
+    def find_device(self, address):
+        """
+        Finds Device object with target address in DeviceList.
+        :param address: identifier for target device.
+        :return: Device object if found, None otherwise.
+        """
+
         for device in self.devices:
             if device.get_address() == address:
                 return device
         return None
 
-    # removed device with specified address from list
     def remove_device(self, address):
+        """
+        Removes Device object with target address in DeviceList.
+        :param address: identifier for target device
+        :return: True if found and removed, False otherwise.
+        """
+
         device = self.find_device(address)
         if device:
             self.devices.remove(device)
             return True
         return False
 
-    # gets list of unused tracks
     def unused_tracks(self):
+        """
+        Gets list of tracks not currently assigned to a device.
+        :return: list of unused track indices.
+        """
+
         unused_tracks = self.track_options.copy()
         for d in self.devices:
             if d.get_track() != -1 and d.get_track() in unused_tracks:
                 unused_tracks.remove(d.get_track())
         return unused_tracks
 
-    # gets devices with track set to -1 (reserves)
+
     def get_reserves(self):
+        """
+        Gets list of reserve devices (not currently assigned a track).
+        :return: list of reserve devices.
+        """
+
         reserves = []
         for d in self.devices:
             if d.get_track() == -1:
@@ -204,11 +297,22 @@ class DeviceList:
         return reserves
 
     def update_track(self, address, track):
+        """
+        Reassigns track to target device.
+        :param address: identifier for target device.
+        :param track: new track to be assigned to target.
+        """
+
         for i in range(len(self.devices)):
             if self.devices[i].get_address() == address:
                 self.devices[i].set_track(track)
 
     def get_highest_addr(self):
+        """
+        Gets highest MAC address, used for leader takeover and tiebreaker.
+        :return: max MAC address value.
+        """
+
         max_addr = 0
         for d in self.devices:
             if d.get_address() > max_addr:
@@ -217,11 +321,15 @@ class DeviceList:
         return max_addr
 
 
-class ThisDevice(Device):  # device object for the main program to use
-    # other device objects will not store device lists in this program
-    # they also don't need the send, receive, and setup methods
-    # visualization methods can also go here
+class ThisDevice(Device):
+    """ Object for main protocol to use, subclass of Device. """
+
     def __init__(self, address):
+        """
+        Non-default constructor for ThisDevice.
+        :param address: identifier for ThisDevice, consistent with how it is viewed.
+        """
+
         super().__init__(address)
         self.device_list = DeviceList(8)
         #self.deleted_devices = DeviceList(8)
@@ -230,7 +338,13 @@ class ThisDevice(Device):  # device object for the main program to use
         self.song_folder_idx = None
 
     def send(self, transceiver, msg: int, duration: float):
-        # send repeatedly for duration of time given
+        """
+        Sends message through RF antenna, 433 MHz channel.
+        :param transceiver: cc1101 antenna.
+        :param msg: int message to send.
+        :param duration: duration of repeated sending.
+        """
+
         start_time = time.time()
         while time.time() - start_time <= duration:
             if not looping:
@@ -242,7 +356,13 @@ class ThisDevice(Device):  # device object for the main program to use
             plt.pause(random.uniform(RAND_LOWER, RAND_UPPER))
 
     def receive(self, transceiver, timeout):
-        # listen for message until timeout reached
+        """
+        Receives message through RF antenna, 433 MHz channel.
+        :param transceiver: cc1101 antenna.
+        :param timeout: how long to wait before quitting.
+        :return: True if message received, False otherwise.
+        """
+
         start_time = time.time()
         while time.time() - start_time < timeout:
             if not looping:
@@ -250,10 +370,7 @@ class ThisDevice(Device):  # device object for the main program to use
             msg = transceiver._wait_for_packet(timedelta(seconds=timeout))
             if (
                 msg != None and msg.checksum_valid
-            ):  # TODO do we need to validate checksum?
-                # msg.payload gives binary string
-                # msg.payload.hex() gives hex string
-                # int(_, 16) converts to integer from hex
+            ):
                 msg = msg.payload.hex()[2:]
                 msg = int(msg, 16)
                 self.received = Message(msg)
@@ -263,6 +380,11 @@ class ThisDevice(Device):  # device object for the main program to use
         return False
 
     def setup(self, transceiver):
+        """
+        Boot-up sequance for all devices.
+        :param transceiver: cc1101 antenna.
+        """
+
         print("--------Listening for leader--------")
         transceiver.set_base_frequency_hertz(433.92e6)
         transceiver.set_symbol_rate_baud(4800)
@@ -270,7 +392,6 @@ class ThisDevice(Device):  # device object for the main program to use
             (0, 0xC0)
         )  # 0xC0 is max power according to cc1101 datasheet
         #print(transceiver)
-        # TODO add some randomness here to the duration to make sure devices don't start at the exact same time?
         if self.receive(transceiver, WAIT_FOR_ATTENDANCE_SEC):  # listen for message
             self.follower_receive_respond_attendance(
                 transceiver
@@ -288,6 +409,11 @@ class ThisDevice(Device):  # device object for the main program to use
             self.leader = True
 
     def follower_receive_respond_attendance(self, transceiver):
+        """
+
+        :param transceiver:
+        :return:
+        """
         while (
             self.received.action != ActionCodes.ATTENDANCE.value
         ):  # make sure received message is attendance message
@@ -312,11 +438,10 @@ class ThisDevice(Device):  # device object for the main program to use
         # self.make_follower() # comment this out to not diplay plots
 
     # leader functions
-    def leader_send_attendance(self, transceiver, playback=None, leader_started_playing=None, song_folder_idx=None):
+    def leader_send_attendance(self, transceiver, playback=None,
+                               leader_started_playing=None, song_folder_idx=None):
         msg = create_message(ActionCodes.ATTENDANCE, 0, self.address)
-        self.send(
-            transceiver, msg, SINGLE_SEND_DURATION
-        ) 
+        self.send(transceiver, msg, SINGLE_SEND_DURATION)
 
         # listen for responses and add unique IDs to device list
         start_time = time.time()
@@ -328,20 +453,13 @@ class ThisDevice(Device):  # device object for the main program to use
             if self.receive(transceiver, ATTENDANCE_RESPONSE_SEC):
                 received_addr = self.received.follow_addr
                 # look for device in list
-                if (self.received.action == ActionCodes.RESPONSE.value) and (self.device_list.find_device(received_addr) == None):
+                if ((self.received.action == ActionCodes.RESPONSE.value)
+                        and (self.device_list.find_device(received_addr) == None)):
                     # puts device in reserves if no more open tracks
                     track = open_tracks.pop(0) if len(open_tracks) > 0 else -1
                     # add address to follower list
                     self.device_list.add_device(address=received_addr, track=track)
                     new_devices = True
-                # if self.received.leader_addr != self.address:
-                #     self.leader_heard_attendance(playback)
-                #     if not self.leader:
-                #         self.track = None
-                #         return
-                #     track = open_tracks.pop(0) if len(open_tracks) > 0 else -1
-                #     self.device_list.add_device(address=self.received.leader_addr, track=track)
-                #     new_devices = True
 
         if new_devices:
             self.leader_send_list(transceiver)
@@ -422,7 +540,6 @@ class ThisDevice(Device):  # device object for the main program to use
         # get song randomly and respective track
         song_folders = sorted(os.listdir(AUDIO_PATH))
         song_folder_idx = random.choice(range(len(song_folders)))
-        #song_folder_idx = 1 # 1 is fur elise 6 is rickroll
         song_path = os.path.join(AUDIO_PATH, song_folders[song_folder_idx])
         track_choices = sorted(os.listdir(song_path))
 
