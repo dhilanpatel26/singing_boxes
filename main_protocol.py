@@ -410,10 +410,10 @@ class ThisDevice(Device):
 
     def follower_receive_respond_attendance(self, transceiver):
         """
-
-        :param transceiver:
-        :return:
+        Follower receives and responds to leader's attendance message.
+        :param transceiver: cc1101 antenna.
         """
+
         while (
             self.received.action != ActionCodes.ATTENDANCE.value
         ):  # make sure received message is attendance message
@@ -422,7 +422,7 @@ class ThisDevice(Device):
             if not looping:
                 return
 
-        # gets to here only if attendance message is heard
+        # attendance message is heard
         print("Received attendance message from leader, responding")
         self.leader_address = self.received.leader_addr
 
@@ -430,16 +430,23 @@ class ThisDevice(Device):
             # add leader to first spot in device list with top track by default
             self.device_list.add_device(self.leader_address, track=0)
 
-        # response to attendance
+        # sends attendance respone to channel
         response = create_message(
             ActionCodes.RESPONSE, self.address, self.leader_address
         )
         self.send(transceiver, response, ATTENDANCE_RESPONSE_SEC)
-        # self.make_follower() # comment this out to not diplay plots
+        # self.make_follower() # comment this out to not display plots
 
-    # leader functions
     def leader_send_attendance(self, transceiver, playback=None,
                                leader_started_playing=None, song_folder_idx=None):
+        """
+        Leader sends attendance message, sends list and song info if new follower responds.
+        :param transceiver: cc1101 antenna.
+        :param playback: song that is currently playing.
+        :param leader_started_playing: time when leader began playing.
+        :param song_folder_idx: song identifier.
+        """
+
         msg = create_message(ActionCodes.ATTENDANCE, 0, self.address)
         self.send(transceiver, msg, SINGLE_SEND_DURATION)
 
@@ -468,17 +475,22 @@ class ThisDevice(Device):
                 self.leader_send_song_join(transceiver, leader_started_playing, song_folder_idx)
 
     def leader_send_song_join(self, transceiver, leader_started_playing, song_folder_idx):
-        # timestamp that follower should start
-        #follower_start_time = time.time() + SONG_JOIN_DELAY
-        #follower_start_time_int = round(follower_start_time * 1000) # get milliseconds
-        #follower_start_timestamp = follower_start_time - leader_started_playing
-        #follower_start_timestamp = round(follower_start_timestamp * 1000) # get milliseconds
+        """
+        Leader sends song info to sync a new follower.
+        :param transceiver: cc1101 antenna.
+        :param leader_started_playing: time when leader started playing.
+        :param song_folder_idx: song identifier.
+        """
+
         start_time_int = round(leader_started_playing * 1000) # get milliseconds
         msg = create_message(ActionCodes.SONG_JOIN, start_time_int, self.address, song_folder_idx)
         self.send(transceiver, msg, SINGLE_SEND_DURATION)
-        # plt.pause(SONG_JOIN_DELAY) not necessary?
 
     def follower_receive_song_join(self):
+        """
+        Follower syncing playback with leader after hearing song join request.
+        :return: playback info, leader start time, song identifier.
+        """
 
         leader_start = self.received.follow_addr / 1000
 
@@ -518,7 +530,12 @@ class ThisDevice(Device):
         return playback, leader_start, song_folder_idx
 
     def leader_send_list(self, transceiver):
-        # iterate through devices who's responses have been heard
+        """
+        Leader sends updated list to all followers after new follower joins.
+        :param transceiver: cc1101 antenna.
+        """
+
+        # iterate through devices whose responses have been heard
         for i in range(len(self.device_list.devices)):
             device = self.device_list.devices[i]
             # create list message and send
@@ -532,12 +549,17 @@ class ThisDevice(Device):
             plt.pause(SEND_LIST_DELAY)
 
     def leader_send_song_start(self, transceiver):
+        """
+        Leader sends song start info to followers connected at song start time.
+        :param transceiver: cc1101 antenna.
+        :return: playback info, leader start time, song identifier.
+        """
 
         # get start time
         start_time = time.time() + SONG_START_OFFSET
         start_time_int = round(start_time * 1000) # get milliseconds
 
-        # get song randomly and respective track
+        # choose song randomly and get associated tracks
         song_folders = sorted(os.listdir(AUDIO_PATH))
         song_folder_idx = random.choice(range(len(song_folders)))
         song_path = os.path.join(AUDIO_PATH, song_folders[song_folder_idx])
@@ -549,7 +571,7 @@ class ThisDevice(Device):
         track_name = track_choices[self.track]
         track_path = os.path.join(song_path, track_name)
         
-        # use follower_address part of message for sending the time in milliseconds to start
+        # use follower_address part of message for sending start time in ms
         sound = AudioSegment.from_file(track_path, format="mp3")
         sound = sound.set_sample_width(2)
         sound = sound - REDUCE_VOLUME
@@ -557,7 +579,7 @@ class ThisDevice(Device):
         msg = create_message(ActionCodes.SONG, start_time_int, self.address, song_folder_idx)
         self.send(transceiver, msg, SINGLE_SEND_DURATION)
         
-        while time.time() < start_time: # wait until play time has come
+        while time.time() < start_time:  # wait until play time has come
             _ = 2+2
         
         print(f"Playing {track_name}")
@@ -567,15 +589,25 @@ class ThisDevice(Device):
         
         return playback, start_time, song_folder_idx
 
-    # All devices must keep an updated list
     def leader_send_delete(self, transceiver, address):
+        """
+        Leader informs connected followers to delete a disconnected device from DeviceList.
+        :param transceiver: cc1101 antenna.
+        :param address: identifier for Device to drop.
+        """
+
         msg = create_message(ActionCodes.DELETE, address, self.address)
         self.send(transceiver, msg, SINGLE_SEND_DURATION)
 
     def leader_check_in(self, transceiver):
-        for device in self.device_list: # iterate through devices in list
+        """
+        Leader sends check-in message to each follower in its DeviceList.
+        :param transceiver: cc1101 antenna.
+        """
+
+        for device in self.device_list:  # iterate through devices in list
             address = device.get_address()
-            if address != self.address: # make sure leader isn't checking in with itself
+            if address != self.address:  # make sure leader isn't checking in with itself
                 msg = create_message(ActionCodes.CHECK_IN, address, self.address)
                 self.send(transceiver, msg, SINGLE_SEND_DURATION)
 
@@ -588,26 +620,28 @@ class ThisDevice(Device):
                             break
 
                 if not responded:
-                    #print("Device didn't respond :( deleting\n")
-                    # d = self.device_list.find_device(address)
-                    # self.deleted_devices.add_device(address, d.get_track()) # TODO add to deleted array so we can get its track back if it comes alive again?
-                    device.missed += 1
-                    if device.missed >= MAX_MISSED_CHECK_INS: # give chance for staying in after missed check-in 
+                    device.missed += 1  # increment device's missed check-in count
+                    if device.missed >= MAX_MISSED_CHECK_INS:  # improves robustness against noisy channel
                         self.device_list.remove_device(
                             address
                         )  # delete from leader's copy
                         self.leader_send_delete(transceiver, address)
 
                         unused_tracks = self.device_list.unused_tracks()  # the unused track after deletion
-                        if device.track != -1: # deleted a device that was playing
+                        if device.track != -1:  # deleted a device that was playing a track
                             for d in self.device_list:
-                                if d.track == -1:  # detect first reserve
+                                if d.track == -1:  # assign unused track to first reserve in DeviceList
                                     d.track = unused_tracks[0]
                                     break
 
                 plt.pause(CHECK_IN_DELAY)
                 
     def leader_heard_attendance(self, playback):
+        """
+        Tiebreaker protocol if leader hears another leader.
+        :param playback: current playback state.
+        """
+
         other_addr = self.received.leader_addr
         if self.address < other_addr:
             print("becoming follower, other leader heard")
@@ -619,11 +653,11 @@ class ThisDevice(Device):
             self.change_display_role()
         # else stay leader
 
-    # follower functions
-    def follower_receive_first_list(self):  # not necessary?
-        pass
-
     def follower_receive_list(self):
+        """
+        Follower updates its DeviceList after receiving list info from leader.
+        """
+
         track = self.received.options
         address = self.received.follow_addr
         # make sure device isn't already in list
@@ -644,6 +678,10 @@ class ThisDevice(Device):
         
 
     def follower_receive_song_start(self):
+        """
+        Follower begins playing and syncs with leader.
+        :return: playback info, leader start time, song identifier.
+        """
 
         # get start time from message
         start_time = self.received.follow_addr / 1000
@@ -664,7 +702,6 @@ class ThisDevice(Device):
         track_name = track_choices[self.track]
         track_path = os.path.join(song_path, track_name)
 
-        # use follower_address part of message for sending the time in milliseconds to start
         sound = AudioSegment.from_file(track_path, format="mp3")
         sound = sound.set_sample_width(2)
         sound = sound - REDUCE_VOLUME
@@ -674,7 +711,7 @@ class ThisDevice(Device):
             follower_start_time = time.time()
 
             follower_start_timestamp = follower_start_time - start_time
-            follower_start_timestamp = round(follower_start_timestamp * 1000) # get milliseconds
+            follower_start_timestamp = round(follower_start_timestamp * 1000)
 
             sound = AudioSegment.from_file(track_path, format="mp3")
             sound = sound.set_sample_width(2)
@@ -692,38 +729,54 @@ class ThisDevice(Device):
         return playback, start_time, song_folder_idx
 
     def follower_respond_check_in(self, transceiver):
-        # maybe modify ThisDevice for an easier way to access the leader address?
-        #plt.pause(0.2)
+        """
+        Follower sends response to leader after hearing personalized check-in.
+        :param transceiver: cc1101 antenna.
+        """
+
         response = create_message(
             ActionCodes.RESPONSE,
             self.address,
             self.device_list.devices[0].get_address(),
         )
-        print("Responding to check in!!!!!!!!")
+        print("Responding to check in!")
         self.send(transceiver, response, CHECK_IN_RESPONSE)
 
     def follower_receive_delete(self, addressToDelete, playback=None):
-        if self.address == addressToDelete:
+        """
+        Follower updates list after receiving delete message, with error handling.
+        :param addressToDelete: identifier for device to delete.
+        :param playback: song info.
+        :return: playback of deleted device, is assigned to promoted reserve.
+        """
+
+        if self.address == addressToDelete:  # error handling, improved robustness
             print(
-                "I have been deleted :((( will respond to next attendance to get back in"
+                "I have been deleted! Will reconnect at next attendance message."
             )
             if playback != None:
                 playback.stop()
             self.track = None
         self.device_list.remove_device(addressToDelete)
 
-        # all devices already have updated song information
-        unused_tracks = self.device_list.unused_tracks() # the unused track after deletion
+        # all devices already have updated song information from attendance
+        unused_tracks = self.device_list.unused_tracks()  # the unused track after deletion
         for device in self.device_list.devices:
-            if device.track == -1: # detect first reserve, then break
-                if device.get_address() == self.address: # this is the reserve to promote
+            if device.track == -1:  # detect first reserve, then break
+                if device.get_address() == self.address:  # this is the reserve to promote
                     self.track = unused_tracks[0]
                     device.track = unused_tracks[0]
                     return self.promote_this_reserve(self.leader_started_playing, self.song_folder_idx)
-                device.track = unused_tracks[0] # other followers update their device list too
+                device.track = unused_tracks[0]  # other followers update their device list too
                 break
 
     def promote_this_reserve(self, leader_start, song_folder_idx):
+        """
+        Reserve promotion after playing
+        :param leader_start:
+        :param song_folder_idx:
+        :return: playback of deleted device, is assigned to promoted reserve.
+        """
 
         song_folders = sorted(os.listdir(AUDIO_PATH))
         song_path = os.path.join(AUDIO_PATH, song_folders[song_folder_idx])
@@ -746,7 +799,12 @@ class ThisDevice(Device):
         playback = _play_with_simpleaudio(sound)
         return playback
 
-    def handle_promotion(self, transceiver):
+    def handle_promotion(self):
+        """
+        Follower takes over as leader after leader disconnects, also promotes a reserve.
+        :return: newly assigned playback if ThisDevice is promoted reserve, True if promoted leader.
+        """
+
         # remove leader from device list
         self.device_list.remove_device(self.leader_address)
         # get new leader from list based on track position
@@ -758,16 +816,21 @@ class ThisDevice(Device):
         # all devices already have updated song information
         unused_tracks = self.device_list.unused_tracks() # the unused track after deletion
         for device in self.device_list.devices:
-            if device.track == -1: # detect first reserve, then break
-                if device.get_address() == self.address: # this is the reserve to promote
+            if device.track == -1:  # detect first reserve, then break
+                if device.get_address() == self.address:  # this is the reserve to promote
                     self.track = unused_tracks[0]
                     device.track = unused_tracks[0]
                     return self.promote_this_reserve(self.leader_started_playing, self.song_folder_idx)
-                device.track = unused_tracks[0] # other followers update their device list too
+                device.track = unused_tracks[0]  # other followers update their device list too
                 break
         return self.leader
+        # TODO: What happens if a reserve gets promoted to leader?
 
     def set_display(self):
+        """
+        Manages display showing leader status and track number.
+        """
+
         plt.ion()
         global role_text 
         if self.leader:
@@ -786,6 +849,10 @@ class ThisDevice(Device):
         plt.show()
     
     def change_display_role(self):
+        """
+        Manages display after ThisDevice changes role.
+        """
+
         plt.ion()
         global role_text 
         if not(role_text == None):
@@ -810,13 +877,19 @@ class ThisDevice(Device):
         
         fig.canvas.draw()
         plt.show()
-            
-            
-
 
 def create_message(
     action: ActionCodes, follower_addr: int, leader_addr: int, options=None
 ):
+    """
+    Creates Message object containing all information relevant to transmit.
+    :param action: code identifying type of message.
+    :param follower_addr: identifier for intended follower.
+    :param leader_addr: identifier for intended leader.
+    :param options: int to send extra information.
+    :return: Message object.
+    """
+
     msg = 0
     msg |= action.value << MessageBits.ACTION_SHIFT.value
     msg |= follower_addr << MessageBits.FOLLOW_ADDR_SHIFT.value
@@ -830,12 +903,21 @@ def create_message(
 
 
 def remove_length_byte(msg: int):
+    """
+    Helper for message bit masking.
+    :param msg: int representation of message payload.
+    :return: masked int payload.
+    """
+
     mask = (1 << (msg.bit_length() - 8)) - 1
     msg &= mask
     return msg
 
-# Define a callback function for the "Stop" button
-def stop_loop(event):
+def stop_loop():
+    """
+    Defines a callback function for the "Stop" button.
+    """
+
     global looping
     global role_text
     global track_text
@@ -849,26 +931,32 @@ def stop_loop(event):
     fig.canvas.draw()
     plt.show()
 
-# Define a callback function for the "Start" button
-def start_loop(event):
+def start_loop():
+    """
+    Define a callback function for the "Start" button.
+    """
     global looping
     looping = True
-    main()  # Call the main loop function
+    main()  # Call the main loop function to start protocol
 
 def main():
+    """
+    Main function of the leader-follower protocol.
+    """
+
     with cc1101.CC1101() as transceiver:
         # create device object
         device = ThisDevice(getnode())
         device.setup(transceiver)
         
-        playback = None # instance of PlayObject
-        leader_started_playing = None # time that leader started playing their track
-        song_folder_idx = None # randomly chosen song folder
+        playback = None  # instance of PlayObject
+        leader_started_playing = None  # time that leader started playing their track
+        song_folder_idx = None  # randomly chosen song folder
 
         if device.get_leader():
             print("--------Leader---------")
         else:
-            print("--------Follower, listening...")
+            print("--------Follower, listening...--------")
             
         device.set_display()
 
@@ -962,7 +1050,7 @@ def main():
                         plt.pause(CHECK_IN_DELAY)
                         device.follower_respond_check_in(transceiver)
                         
-                else:  # no message heard
+                else:  # no message heard, start takeover protocol
                     print("Is there anybody out there?")
                     if not looping:
                         if playback != None:
@@ -973,7 +1061,7 @@ def main():
                         break
 
                     # Leader dropped out
-                    if device.handle_promotion(transceiver):
+                    if device.handle_promotion():
                         print("--------Taking over as new leader--------")
                     else:
                         print("Staying as follower under a new leader")
