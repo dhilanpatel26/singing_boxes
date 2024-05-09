@@ -1,5 +1,5 @@
 # Singing Boxes: An Autonomous and Adaptive Leader-Follower Protocol for Collaborative Robotics
-[Demo Video](https://drive.google.com/file/d/1l31THWsG3VefIB7Ekl8fyuOGaRxllF8G/view?usp=sharing "https://drive.google.com/file/d/1l31THWsG3VefIB7Ekl8fyuOGaRxllF8G/view?usp=sharing")
+[Demo Video](https://drive.google.com/file/d/1nrH9m9OET4b8nIUntWM6QS8P7RI4sD1G/view?usp=sharing "https://drive.google.com/file/d/1nrH9m9OET4b8nIUntWM6QS8P7RI4sD1G/view?usp=sharing")
 
 In this short demo, five devices communicate wirelessly to each play a different track of "Piano Man."  The leader will assign a task to all connected devices as they join and transmit indicators to synchronize actions in real-time. When the leader (red) is manually disconnected, a follower (blue) seamlessly takes over as the new leader. When a follower is disconnected, its task becomes available to any new devices that join, as coordinated by the leader. You can hear the different tracks stop as I disconnect a device, and start in synchronization with the others as I reconnect it. The screen of each device details its leader/follower status, as well as the track it is currently playing.
 
